@@ -26,6 +26,9 @@ type SingleThreadedProver struct {
 	degreeHL     int
 	degreeHR     int
 	degreeHPrime int
+
+	evaledStaticTables [][][]fr.Element
+	staticIsNotZero    [][]bool
 }
 
 // NewSingleThreadedProver constructs a new prover
@@ -35,7 +38,7 @@ func NewSingleThreadedProver(
 	eq polynomial.BookKeepingTable,
 	gates []circuit.Gate,
 	staticTables []polynomial.BookKeepingTable,
-) SingleThreadedProver {
+) *SingleThreadedProver {
 	// Auto-computes the degree on each variables
 	degreeHL, degreeHR, degreeHPrime := 0, 0, 0
 	for _, gate := range gates {
@@ -44,7 +47,7 @@ func NewSingleThreadedProver(
 		degreeHR = common.Max(degreeHR, dR)
 		degreeHPrime = common.Max(degreeHPrime, dPrime)
 	}
-	return SingleThreadedProver{
+	return &SingleThreadedProver{
 		vL:           vL,
 		vR:           vR,
 		eq:           eq,
@@ -109,13 +112,19 @@ func (p *SingleThreadedProver) Prove() (proof Proof, qPrime, qL, qR, finalClaims
 	return proof, qPrime, qL, qR, finalClaims
 }
 
-// FoldHL folds on the first variable of hR
+// FoldHL folds on the first variable of hL
 func (p *SingleThreadedProver) FoldHL(r fr.Element) {
+	for i := range p.staticTables {
+		p.staticTables[i].Fold(r)
+	}
 	p.vL.Fold(r)
 }
 
 // FoldHR folds on the first variable of hR
 func (p *SingleThreadedProver) FoldHR(r fr.Element) {
+	for i := range p.staticTables {
+		p.staticTables[i].Fold(r)
+	}
 	p.vR.Fold(r)
 }
 

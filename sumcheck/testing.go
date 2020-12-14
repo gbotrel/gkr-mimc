@@ -48,7 +48,7 @@ func InitializeMultiThreadedProver(bN, nChunks int) MultiThreadedProver {
 }
 
 // InitializeProverForTests creates a test prover
-func InitializeProverForTests(bN int) SingleThreadedProver {
+func InitializeProverForTests(bN int) *SingleThreadedProver {
 
 	var zero, one, two fr.Element
 	one.SetOne()

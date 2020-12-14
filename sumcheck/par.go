@@ -96,13 +96,88 @@ func (p *MultiThreadedProver) Prove(nCore int) (proof Proof, qPrime, qL, qR, fin
 
 	// Initialize the channels
 	evalsChan := make(chan []fr.Element, nChunks)
-	finChan := make(chan indexedProver, nChunks)
+	finChan := make(chan int, nChunks)
 	rChans := make([]chan fr.Element, nChunks)
 
-	// Starts the sub-provers
+	subProvers := make([]*SingleThreadedProver, nChunks)
+
+	var evaledStaticTables [][][]fr.Element
+	var staticIsNotZero [][]bool
+
+	// create the sub-provers
+	for i := 0; i < nChunks; i++ {
+		subProvers[i] = NewSingleThreadedProver(
+			p.vL[i],
+			p.vR[i],
+			p.eq[i],
+			p.gates,
+			p.staticTables,
+		)
+	}
+
+	updatedPrecomputedStaticTables := func(hr bool) {
+		// Define usefull constants
+		n := len(subProvers[0].eq.Table)                      // Number of subcircuit. Since we haven't fold on h' yet
+		g := len(subProvers[0].vR.Table) / n                  // SubCircuit size. Since we haven't fold on hR yet
+		lenHL := len(subProvers[0].staticTables[0].Table) / g // Number of remaining variables on R
+		nGate := len(subProvers[0].staticTables)              // Number of different gates
+		nEvals := subProvers[0].degreeHL + 1
+		if hr {
+			nEvals = subProvers[0].degreeHR + 1
+		}
+
+		// PreEvaluates the bookKeepingTable so we can reuse them results multiple time later
+		if len(evaledStaticTables) < nGate {
+			evaledStaticTables = make([][][]fr.Element, nGate)
+		} else {
+			evaledStaticTables = evaledStaticTables[:nGate]
+		}
+
+		// staticIsNotZero tracks the values of hL and hR at which the staticTable cancels
+		// so that we can avoid computing gates evaluation and multiplying the result by zero after
+		if len(staticIsNotZero) < nGate {
+			staticIsNotZero = make([][]bool, nGate)
+		} else {
+			staticIsNotZero = staticIsNotZero[:nGate]
+		}
+		for i, tab := range p.staticTables {
+			preEvaluatedStaticTables := tab.FunctionEvals()
+			lenI := lenHL * g / 2
+			if len(staticIsNotZero[i]) < lenI {
+				staticIsNotZero[i] = make([]bool, lenI)
+				evaledStaticTables[i] = make([][]fr.Element, lenI)
+			} else {
+				staticIsNotZero[i] = staticIsNotZero[i][:lenI]
+				evaledStaticTables[i] = evaledStaticTables[i][:lenI]
+			}
+
+			for h := range staticIsNotZero[i] {
+				staticIsNotZero[i][h] = !(tab.Table[h].IsZero() &&
+					preEvaluatedStaticTables[h].IsZero())
+				// Computes all the preEvaluations of the staticTables
+				if len(evaledStaticTables[i][h]) < nEvals {
+					evaledStaticTables[i][h] = make([]fr.Element, nEvals)
+				} else {
+					evaledStaticTables[i][h] = evaledStaticTables[i][h][:nEvals]
+				}
+				evaledStaticTables[i][h][0] = tab.Table[h]
+				for t := 1; t < nEvals; t++ {
+					evaledStaticTables[i][h][t].Add(
+						&evaledStaticTables[i][h][t-1],
+						&preEvaluatedStaticTables[h],
+					)
+				}
+			}
+		}
+	}
+	updatedPrecomputedStaticTables(false)
+
+	// run the subprovers
 	for i := 0; i < nChunks; i++ {
 		rChans[i] = make(chan fr.Element, 1)
-		go p.RunForChunk(i, evalsChan, rChans[i], finChan)
+		subProvers[i].evaledStaticTables = evaledStaticTables
+		subProvers[i].staticIsNotZero = staticIsNotZero
+		go subProvers[i].Run(i, evalsChan, rChans[i], finChan)
 	}
 
 	// Process on all values until all the subprover are completely fold
@@ -111,9 +186,24 @@ func (p *MultiThreadedProver) Prove(nCore int) (proof Proof, qPrime, qL, qR, fin
 		proof.PolyCoeffs[i] = polynomial.InterpolateOnRange(evals)
 		r := common.GetChallenge(proof.PolyCoeffs[i])
 		if i < 2*bG {
-			for j := range p.staticTables {
+			// on HL and HR only
+			// TODO @gbotrel might not be very helpful to paralellize, need to try with bigger circuits
+			// common.Execute(len(p.staticTables), func(start, end int) {
+			// 	for j := start; j < end; j++ {
+			// 		p.staticTables[j].Fold(r)
+			// 	}
+			// })
+			for j := 0; j < len(p.staticTables); j++ {
 				p.staticTables[j].Fold(r)
 			}
+
+			// we also update evaledStaticTables, staticIsNotZero
+			updatedPrecomputedStaticTables(i >= bG-1)
+			for j := 0; j < nChunks; j++ {
+				subProvers[j].evaledStaticTables = evaledStaticTables
+				subProvers[j].staticIsNotZero = staticIsNotZero
+			}
+
 		}
 
 		Broadcast(rChans, r)
@@ -126,7 +216,7 @@ func (p *MultiThreadedProver) Prove(nCore int) (proof Proof, qPrime, qL, qR, fin
 		}
 	}
 
-	newP := ConsumeMergeProvers(finChan, nChunks)
+	newP := ConsumeMergeProvers(finChan, subProvers, nChunks)
 
 	// Finishes on hPrime. Identical to the single-threaded implementation
 	for i := 2*bG + bN - logNChunk; i < bN+2*bG; i++ {
@@ -153,7 +243,7 @@ func (p *MultiThreadedProver) Prove(nCore int) (proof Proof, qPrime, qL, qR, fin
 
 // ConsumeMergeProvers reallocate the provers from the content of the indexed prover,
 // by concatenating their bookkeeping tables.
-func ConsumeMergeProvers(ch chan indexedProver, nToMerge int) SingleThreadedProver {
+func ConsumeMergeProvers(ch chan int, subProvers []*SingleThreadedProver, nToMerge int) *SingleThreadedProver {
 
 	// Allocate the new Table
 	newVL := make([]fr.Element, nToMerge)
@@ -162,18 +252,18 @@ func ConsumeMergeProvers(ch chan indexedProver, nToMerge int) SingleThreadedProv
 
 	indexed := <-ch
 	// First off the loop to take the static tables at the same time
-	newVL[indexed.I] = indexed.P.vL.Table[0]
-	newVR[indexed.I] = indexed.P.vR.Table[0]
-	newEq[indexed.I] = indexed.P.eq.Table[0]
+	newVL[indexed] = subProvers[indexed].vL.Table[0]
+	newVR[indexed] = subProvers[indexed].vR.Table[0]
+	newEq[indexed] = subProvers[indexed].eq.Table[0]
 	// All subProvers have the same staticTables. So we can take the first one
-	staticTables := indexed.P.staticTables
-	gates := indexed.P.gates
+	staticTables := subProvers[indexed].staticTables
+	gates := subProvers[indexed].gates
 
 	for i := 0; i < nToMerge-1; i++ {
 		indexed = <-ch
-		newVL[indexed.I] = indexed.P.vL.Table[0]
-		newVR[indexed.I] = indexed.P.vR.Table[0]
-		newEq[indexed.I] = indexed.P.eq.Table[0]
+		newVL[indexed] = subProvers[indexed].vL.Table[0]
+		newVR[indexed] = subProvers[indexed].vR.Table[0]
+		newEq[indexed] = subProvers[indexed].eq.Table[0]
 	}
 
 	return NewSingleThreadedProver(
@@ -227,21 +317,13 @@ func (p *MultiThreadedProver) GetClaimForChunk(chunkIndex int, evalsChan chan fr
 	evalsChan <- subProver.GetClaim()
 }
 
-// RunForChunk runs thread with a partial prover
-func (p *MultiThreadedProver) RunForChunk(
+// Run runs thread with a partial prover
+func (subProver *SingleThreadedProver) Run(
 	chunkIndex int,
 	evalsChan chan []fr.Element,
 	rChan chan fr.Element,
-	finChan chan indexedProver,
+	finChan chan int,
 ) {
-
-	subProver := NewSingleThreadedProver(
-		p.vL[chunkIndex],
-		p.vR[chunkIndex],
-		p.eq[chunkIndex],
-		p.gates,
-		p.staticTables,
-	)
 
 	// Define usefull constants
 	n := len(subProver.eq.Table)     // Number of subcircuit. Since we haven't fold on h' yet
@@ -251,25 +333,22 @@ func (p *MultiThreadedProver) RunForChunk(
 
 	// Run on hL
 	for i := 0; i < bG; i++ {
-		evalsChan <- subProver.GetEvalsOnHL()
-		r := <-rChan
-		subProver.FoldHL(r)
+		evalsChan <- subProver.accumulateEvalsOnHL(subProver.evaledStaticTables, subProver.staticIsNotZero)
+		subProver.vL.Fold(<-rChan)
 	}
 
 	// Run on hR
 	for i := 0; i < bG; i++ {
-		evalsChan <- subProver.GetEvalsOnHR()
-		r := <-rChan
-		subProver.FoldHR(r)
+		evalsChan <- subProver.accumulateEvalsOnHR(subProver.staticIsNotZero, subProver.evaledStaticTables)
+		subProver.vR.Fold(<-rChan)
 	}
 
 	// Run on hPrime
 	for i := 0; i < bN; i++ {
 		evalsChan <- subProver.GetEvalsOnHPrime()
-		r := <-rChan
-		subProver.FoldHPrime(r)
+		subProver.FoldHPrime(<-rChan)
 	}
 
-	finChan <- indexedProver{I: chunkIndex, P: subProver}
+	finChan <- chunkIndex
 	close(rChan)
 }

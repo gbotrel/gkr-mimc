@@ -91,14 +91,16 @@ func (p *Prover) GetBookKeepingTablesForIntermediateRound(
 	statics = make([]polynomial.BookKeepingTable, len(staticsL))
 
 	// Then the staticTables in the order given by
-	for i := range statics {
-		statics[i] = polynomial.LinearCombinationOfBookKeepingTables(
-			staticsL[i],
-			staticsR[i],
-			lambdaL,
-			lambdaR,
-		)
-	}
+	common.Execute(len(statics), func(start, end int) {
+		for i := start; i < end; i++ {
+			statics[i] = polynomial.LinearCombinationOfBookKeepingTables(
+				staticsL[i],
+				staticsR[i],
+				lambdaL,
+				lambdaR,
+			)
+		}
+	})
 	return vL, vR, eq, statics
 }
 
