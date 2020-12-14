@@ -61,10 +61,9 @@ func (p *MultiThreadedProver) GetClaim(nCore int) fr.Element {
 	// Define usefull constants
 	nChunks := len(p.eq)
 	evalsChan := make(chan fr.Element, len(p.eq))
-	semaphore := common.NewSemaphore(nCore)
 
 	for i := 0; i < nChunks; i++ {
-		go p.GetClaimForChunk(i, evalsChan, semaphore)
+		go p.GetClaimForChunk(i, evalsChan)
 	}
 
 	var res fr.Element
@@ -296,10 +295,7 @@ func Broadcast(chs []chan fr.Element, r fr.Element) {
 }
 
 // GetClaimForChunk runs GetClaim on a chunk, and is aimed at being run in the Background
-func (p *MultiThreadedProver) GetClaimForChunk(chunkIndex int, evalsChan chan fr.Element, semaphore common.Semaphore) {
-	semaphore.Acquire()
-	defer semaphore.Release()
-
+func (p *MultiThreadedProver) GetClaimForChunk(chunkIndex int, evalsChan chan fr.Element) {
 	// Deep-copies the static tables
 	staticTablesCopy := make([]polynomial.BookKeepingTable, len(p.staticTables))
 	for i := range staticTablesCopy {
