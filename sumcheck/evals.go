@@ -236,20 +236,19 @@ func (p *SingleThreadedProver) accumulateEvalsOnHR(
 	evaledVRs := make([]fr.Element, nEvals)
 
 	// Initialize the loop element to reduce the malloc bottleneck
-	var i, h, hR, t, bVR int
-	var gate circuit.Gate
+	var i, hR, t, bVR int
 	vS := make([]fr.Element, nEvals)
 	var v fr.Element
 
 	// splitValues[nGate][len(hR) * len(hL)][nEvals]
 	// We accumulate the combinators results in this table, by separating the gates
 	// We can then avoid a multiplication in the combinator
-	splitValues := make([][][]fr.Element, nGate)
+	splitValues := make([][]fr.Element, nGate)
 	for i = range splitValues {
-		splitValues[i] = make([][]fr.Element, lenHR/2)
-		for h = range splitValues[i] {
-			splitValues[i][h] = make([]fr.Element, nEvals)
-		}
+		splitValues[i] = make([]fr.Element, nEvals*lenHR/2)
+		// for h = range splitValues[i] {
+		// 	splitValues[i][h] = make([]fr.Element, nEvals)
+		// }
 	}
 
 	for hPrime := 0; hPrime < n; hPrime++ {
@@ -262,16 +261,18 @@ func (p *SingleThreadedProver) accumulateEvalsOnHR(
 			for t = 1; t < nEvals; t++ {
 				evaledVRs[t].Add(&evaledVRs[t-1], &deltaVR)
 			}
-			for i, gate = range p.gates {
-				if staticIsNotZero[i][hR] {
-					gate.EvalManyVR(vS, &evaledVL, evaledVRs)
-					for t, v = range vS {
-						// Multiplies the result by Eq and adds it to the splitValues
-						// who accumulates the results
-						v.Mul(&v, &evaledEq)
-						splitValues[i][hR][t].Add(&splitValues[i][hR][t], &v)
-					}
+			for i := 0; i < len(p.gates); i++ {
+				if !staticIsNotZero[i][hR] {
+					continue
 				}
+				p.gates[i].EvalManyVR(vS, &evaledVL, evaledVRs)
+				for t := 0; t < len(vS); t++ {
+					// Multiplies the result by Eq and adds it to the splitValues
+					// who accumulates the results
+					v.Mul(&vS[t], &evaledEq)
+					splitValues[i][(hR*nEvals)+t].Add(&splitValues[i][(hR*nEvals)+t], &v)
+				}
+
 			}
 		}
 	}
@@ -279,9 +280,9 @@ func (p *SingleThreadedProver) accumulateEvalsOnHR(
 	// Combine the results to form the final response
 	res := make([]fr.Element, nEvals)
 	for i := range splitValues {
-		for h := range splitValues[i] {
-			for t, v := range splitValues[i][h] {
-				v.Mul(&v, &evaledStaticTables[i][h][t])
+		for h := 0; h < len(splitValues[i]); h += nEvals {
+			for t := 0; t < nEvals; t++ {
+				v.Mul(&splitValues[i][h+t], &evaledStaticTables[i][h][t])
 				res[t].Add(&res[t], &v)
 			}
 		}

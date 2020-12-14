@@ -181,17 +181,18 @@ func (c *CipherGate) GnarkEval(cs *frontend.ConstraintSystem, vL, vR frontend.Va
 // EvalManyVR performs cipher evaluations of many vRs values by one vL value
 // Nothing special to do here
 func (c *CipherGate) EvalManyVR(res []fr.Element, vL *fr.Element, vRs []fr.Element) {
-	var tmp fr.Element
+	var a, b fr.Element
+
 	for i := 0; i < len(vRs); i++ {
 		// tmp = vR + Ark
-		tmp.Add(&vRs[i], &c.Ark)
+		a.Add(&vRs[i], &c.Ark)
 		// res = tmp^7
-		res[i].Square(&tmp)
-		res[i].Mul(&res[i], &tmp)
-		res[i].Square(&res[i])
-		res[i].Mul(&res[i], &tmp)
+		b.Square(&a)
+		b.Mul(&b, &a)
+		b.Square(&b)
+		b.Mul(&b, &a)
 		// Then add vL
-		res[i].Add(&res[i], vL)
+		res[i].Add(&b, vL)
 	}
 }
 
