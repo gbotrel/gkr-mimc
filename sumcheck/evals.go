@@ -344,9 +344,9 @@ func (p *SingleThreadedProver) accumulateEvalsOnHPrime(
 	// Combine the result to obtain the final response
 	res := make([]fr.Element, nEvals)
 	for i = range splitValues {
-		for t, v = range splitValues[i] {
-			v.Mul(&v, &staticTablesVals[i])
-			res[t].Add(&res[t], &v)
+		for j := 0; j < len(splitValues[i]); j++ {
+			v.Mul(&splitValues[i][j], &staticTablesVals[i])
+			res[j].Add(&res[j], &v)
 		}
 	}
 
