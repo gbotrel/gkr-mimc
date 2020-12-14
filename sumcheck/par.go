@@ -112,6 +112,12 @@ func (p *MultiThreadedProver) Prove(nCore int) (proof Proof, qPrime, qL, qR, fin
 		evals := ConsumeAccumulate(evalsChan, nChunks)
 		proof.PolyCoeffs[i] = polynomial.InterpolateOnRange(evals)
 		r := common.GetChallenge(proof.PolyCoeffs[i])
+		if i < 2*bG {
+			for j := range p.staticTables {
+				p.staticTables[j].Fold(r)
+			}
+		}
+
 		Broadcast(rChans, r)
 		if i < bG {
 			qL[i] = r
@@ -238,18 +244,13 @@ func (p *MultiThreadedProver) RunForChunk(
 	semaphore common.Semaphore,
 ) {
 	semaphore.Acquire()
-	// Deep-copies the static tables
-	staticTablesCopy := make([]polynomial.BookKeepingTable, len(p.staticTables))
-	for i := range staticTablesCopy {
-		staticTablesCopy[i] = p.staticTables[i].DeepCopy()
-	}
 
 	subProver := NewSingleThreadedProver(
 		p.vL[chunkIndex],
 		p.vR[chunkIndex],
 		p.eq[chunkIndex],
 		p.gates,
-		staticTablesCopy,
+		p.staticTables,
 	)
 
 	// Define usefull constants

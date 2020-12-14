@@ -111,17 +111,11 @@ func (p *SingleThreadedProver) Prove() (proof Proof, qPrime, qL, qR, finalClaims
 
 // FoldHL folds on the first variable of hR
 func (p *SingleThreadedProver) FoldHL(r fr.Element) {
-	for i := range p.staticTables {
-		p.staticTables[i].Fold(r)
-	}
 	p.vL.Fold(r)
 }
 
 // FoldHR folds on the first variable of hR
 func (p *SingleThreadedProver) FoldHR(r fr.Element) {
-	for i := range p.staticTables {
-		p.staticTables[i].Fold(r)
-	}
 	p.vR.Fold(r)
 }
 
