@@ -4,7 +4,6 @@ import (
 	"gkr-mimc/circuit"
 	"gkr-mimc/common"
 	"gkr-mimc/polynomial"
-	"sync"
 
 	"github.com/consensys/gurvy/bn256/fr"
 )
@@ -99,12 +98,11 @@ func (p *MultiThreadedProver) Prove(nCore int) (proof Proof, qPrime, qL, qR, fin
 	evalsChan := make(chan []fr.Element, nChunks)
 	finChan := make(chan indexedProver, nChunks)
 	rChans := make([]chan fr.Element, nChunks)
-	semaphore := common.NewSemaphore(nCore)
 
 	// Starts the sub-provers
 	for i := 0; i < nChunks; i++ {
 		rChans[i] = make(chan fr.Element, 1)
-		go p.RunForChunk(i, evalsChan, rChans[i], finChan, semaphore)
+		go p.RunForChunk(i, evalsChan, rChans[i], finChan)
 	}
 
 	// Process on all values until all the subprover are completely fold
@@ -202,15 +200,9 @@ func ConsumeAccumulate(ch chan []fr.Element, nToConsume int) []fr.Element {
 
 // Broadcast broadcasts r, to all channels
 func Broadcast(chs []chan fr.Element, r fr.Element) {
-	var wg sync.WaitGroup
-	wg.Add(len(chs))
 	for _, ch := range chs {
-		go func(ch chan fr.Element) {
-			ch <- r
-			wg.Done()
-		}(ch)
+		ch <- r
 	}
-	wg.Wait()
 }
 
 // GetClaimForChunk runs GetClaim on a chunk, and is aimed at being run in the Background
@@ -241,9 +233,7 @@ func (p *MultiThreadedProver) RunForChunk(
 	evalsChan chan []fr.Element,
 	rChan chan fr.Element,
 	finChan chan indexedProver,
-	semaphore common.Semaphore,
 ) {
-	semaphore.Acquire()
 
 	subProver := NewSingleThreadedProver(
 		p.vL[chunkIndex],
@@ -262,31 +252,24 @@ func (p *MultiThreadedProver) RunForChunk(
 	// Run on hL
 	for i := 0; i < bG; i++ {
 		evalsChan <- subProver.GetEvalsOnHL()
-		semaphore.Release()
 		r := <-rChan
-		semaphore.Acquire()
 		subProver.FoldHL(r)
 	}
 
 	// Run on hR
 	for i := 0; i < bG; i++ {
 		evalsChan <- subProver.GetEvalsOnHR()
-		semaphore.Release()
 		r := <-rChan
-		semaphore.Acquire()
 		subProver.FoldHR(r)
 	}
 
 	// Run on hPrime
 	for i := 0; i < bN; i++ {
 		evalsChan <- subProver.GetEvalsOnHPrime()
-		semaphore.Release()
 		r := <-rChan
-		semaphore.Acquire()
 		subProver.FoldHPrime(r)
 	}
 
 	finChan <- indexedProver{I: chunkIndex, P: subProver}
-	semaphore.Release()
 	close(rChan)
 }
