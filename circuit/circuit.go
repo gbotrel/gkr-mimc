@@ -48,21 +48,7 @@ func (c *Circuit) Assign(inputs [][]fr.Element, nCore int) Assignment {
 // LayerAsBKTWithCopy creates a deep-copy of a given layer of the assignment
 func (a *Assignment) LayerAsBKTWithCopy(layer, nCore int) []polynomial.BookKeepingTable {
 	res := make([]polynomial.BookKeepingTable, len(a.Values[layer]))
-	// var wg sync.WaitGroup
-	// wg.Add(len(res))
-	// semaphore := common.NewSemaphore(nCore)
-	// defer semaphore.Close()
-	// // Deep-copies the values of the assignment
-	// for i, tab := range a.Values[layer] {
-	// 	go func(i int, tab []fr.Element) {
-	// 		semaphore.Acquire()
-	// 		res[i].Table = make([]fr.Element, len(tab))
-	// 		copy(res[i].Table, tab)
-	// 		semaphore.Release()
-	// 		wg.Done()
-	// 	}(i, tab)
-	// }
-	// wg.Wait()
+
 	common.Execute(len(a.Values[layer]), func(start, end int) {
 		for i := start; i < end; i++ {
 			tab := a.Values[layer][i]
